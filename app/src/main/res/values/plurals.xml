@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="like_count">
+        <item quantity="one">좋아요 %d개</item>
+        <item quantity="other">좋아요 %d개</item>
+    </plurals>
+    <plurals name="comment_count">
+        <item quantity="one">댓글 %d개</item>
+        <item quantity="other">댓글 %d개</item>
+    </plurals>
+    <plurals name="post_count">
+        <item quantity="one">%d개의 게시물</item>
+        <item quantity="other">%d개의 게시물</item>
+    </plurals>
+    <plurals name="follower_count">
+        <item quantity="one">팔로워 %d명</item>
+        <item quantity="other">팔로워 %d명</item>
+    </plurals>
+    <plurals name="following_count">
+        <item quantity="one">팔로잉 %d명</item>
+        <item quantity="other">팔로잉 %d명</item>
+    </plurals>
+</resources> 
