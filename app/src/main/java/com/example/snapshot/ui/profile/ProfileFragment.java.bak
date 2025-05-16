@@ -1,0 +1,326 @@
+package com.example.snapshot.ui.profile;
+
+import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
+import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.LinearLayoutManager;
+
+import com.bumptech.glide.Glide;
+import com.example.snapshot.R;
+import com.example.snapshot.databinding.FragmentProfileBinding;
+import com.example.snapshot.model.Post;
+import com.example.snapshot.model.Tag;
+import com.example.snapshot.model.User;
+import com.example.snapshot.repository.PostRepository;
+import com.example.snapshot.repository.TagRepository;
+import com.example.snapshot.repository.UserRepository;
+import com.example.snapshot.ui.auth.LoginActivity;
+import com.example.snapshot.ui.home.TagAdapter;
+import com.example.snapshot.ui.profile.FollowListActivity;
+import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.DocumentSnapshot;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class ProfileFragment extends Fragment {
+
+    private FragmentProfileBinding binding;
+    private UserRepository userRepository;
+    private PostRepository postRepository;
+    private TagRepository tagRepository;
+    
+    private List<Post> postList = new ArrayList<>();
+    private List<Tag> savedTagList = new ArrayList<>();
+    private User currentUser;
+    
+    private ProfilePostAdapter postAdapter;
+    private TagAdapter tagAdapter;
+    
+    @Override
+    public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+        binding = FragmentProfileBinding.inflate(inflater, container, false);
+        return binding.getRoot();
+    }
+    
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+        
+        // 저장소 초기화
+        userRepository = UserRepository.getInstance();
+        postRepository = PostRepository.getInstance();
+        tagRepository = TagRepository.getInstance();
+        
+        // 현재 로그인된 사용자 확인
+        FirebaseUser firebaseUser = userRepository.getCurrentUser();
+        if (firebaseUser == null) {
+            navigateToLogin();
+            return;
+        }
+        
+        // 리사이클러뷰 초기화
+        setupRecyclerViews();
+        
+        // 이벤트 리스너 설정
+        setupListeners();
+        
+        // 사용자 데이터 로드
+        loadUserData(firebaseUser.getUid());
+    }
+    
+    private void setupRecyclerViews() {
+        // 게시물 어댑터 설정
+        postAdapter = new ProfilePostAdapter(requireContext(), postList);
+        binding.recyclerPosts.setLayoutManager(new GridLayoutManager(requireContext(), 3));
+        binding.recyclerPosts.setAdapter(postAdapter);
+        
+        // 저장된 태그 어댑터 설정
+        tagAdapter = new TagAdapter(requireContext(), savedTagList, true);
+        binding.recyclerSavedTags.setLayoutManager(
+                new LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false));
+        binding.recyclerSavedTags.setAdapter(tagAdapter);
+        
+        // 태그 클릭 리스너 설정
+        tagAdapter.setOnTagClickListener(position -> {
+            if (position >= 0 && position < savedTagList.size()) {
+                Tag tag = savedTagList.get(position);
+                navigateToTagDetail(tag.getTagId());
+            }
+        });
+    }
+    
+    private void setupListeners() {
+        // 프로필 편집 버튼 클릭 리스너
+        binding.btnEditProfile.setOnClickListener(v -> {
+            // TODO: 프로필 편집 화면으로 이동
+            Toast.makeText(requireContext(), "프로필 편집 화면 구현 예정", Toast.LENGTH_SHORT).show();
+        });
+        
+        // 설정 버튼 클릭 리스너
+        binding.btnSettings.setOnClickListener(v -> {
+            showSettingsOptions();
+        });
+        
+        // 팔로워 클릭
+        binding.tvFollowerCount.setOnClickListener(v -> {
+            if (currentUser != null) {
+                Intent intent = new Intent(requireContext(), FollowListActivity.class);
+                intent.putExtra(FollowListActivity.EXTRA_USER_ID, currentUser.getUserId());
+                intent.putExtra(FollowListActivity.EXTRA_LIST_TYPE, FollowListActivity.TYPE_FOLLOWERS);
+                startActivity(intent);
+            }
+        });
+        
+        // 팔로잉 클릭
+        binding.tvFollowingCount.setOnClickListener(v -> {
+            if (currentUser != null) {
+                Intent intent = new Intent(requireContext(), FollowListActivity.class);
+                intent.putExtra(FollowListActivity.EXTRA_USER_ID, currentUser.getUserId());
+                intent.putExtra(FollowListActivity.EXTRA_LIST_TYPE, FollowListActivity.TYPE_FOLLOWING);
+                startActivity(intent);
+            }
+        });
+    }
+    
+    private void loadUserData(String userId) {
+        showLoading(true);
+        
+        userRepository.getUserById(userId)
+                .addOnSuccessListener(documentSnapshot -> {
+                    if (documentSnapshot.exists()) {
+                        currentUser = documentSnapshot.toObject(User.class);
+                        if (currentUser != null) {
+                            updateUI(currentUser);
+                            loadUserPosts(userId);
+                            loadSavedTags(userId);
+                        }
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    showLoading(false);
+                    Toast.makeText(requireContext(), "사용자 정보를 불러오는 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show();
+                });
+    }
+    
+    private void updateUI(User user) {
+        // 사용자 이름 설정
+        binding.tvUsername.setText(user.getName());
+        
+        // 프로필 이미지 설정
+        if (user.getProfilePicUrl() != null && !user.getProfilePicUrl().isEmpty()) {
+            Glide.with(this)
+                    .load(user.getProfilePicUrl())
+                    .placeholder(R.drawable.ic_profile_placeholder)
+                    .error(R.drawable.ic_profile_placeholder)
+                    .into(binding.ivProfile);
+        } else {
+            binding.ivProfile.setImageResource(R.drawable.ic_profile_placeholder);
+        }
+        
+        // 게시물 수, 팔로워 수, 팔로잉 수 설정
+        binding.tvPostCount.setText(String.valueOf(0)); // 포스트 수는 나중에 업데이트
+        binding.tvFollowerCount.setText(String.valueOf(user.getFollowerCount()));
+        binding.tvFollowingCount.setText(String.valueOf(user.getFollowingCount()));
+        
+        // 자기소개 설정
+        if (user.getBio() != null && !user.getBio().isEmpty()) {
+            binding.tvBio.setText(user.getBio());
+            binding.tvBio.setVisibility(View.VISIBLE);
+        } else {
+            binding.tvBio.setVisibility(View.GONE);
+        }
+    }
+    
+    private void loadUserPosts(String userId) {
+        postRepository.getPostsByUser(userId)
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    postList.clear();
+                    
+                    for (DocumentSnapshot document : queryDocumentSnapshots) {
+                        Post post = document.toObject(Post.class);
+                        if (post != null) {
+                            postList.add(post);
+                        }
+                    }
+                    
+                    // 게시물 수 업데이트
+                    binding.tvPostCount.setText(String.valueOf(postList.size()));
+                    
+                    postAdapter.notifyDataSetChanged();
+                    showLoading(false);
+                })
+                .addOnFailureListener(e -> {
+                    showLoading(false);
+                    Toast.makeText(requireContext(), "게시물을 불러오는 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show();
+                });
+    }
+    
+    /**
+     * 사용자가 저장한 태그 목록을 로드합니다.
+     */
+    private void loadSavedTags(String userId) {
+        // 로딩 표시
+        binding.progressBarTags.setVisibility(View.VISIBLE);
+        
+        tagRepository.getSavedTagsByUser(userId)
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    List<String> savedTagIds = new ArrayList<>();
+                    
+                    // saved_tags 컬렉션에서 태그 ID만 추출
+                    for (DocumentSnapshot document : queryDocumentSnapshots) {
+                        String tagId = document.getString("tagId");
+                        if (tagId != null) {
+                            savedTagIds.add(tagId);
+                        }
+                    }
+                    
+                    if (savedTagIds.isEmpty()) {
+                        // 저장된 태그가 없는 경우
+                        savedTagList.clear();
+                        tagAdapter.notifyDataSetChanged();
+                        updateSavedTagsUI();
+                        binding.progressBarTags.setVisibility(View.GONE);
+                    } else {
+                        // 저장된 태그 ID로 태그 정보 가져오기
+                        loadTagsByIds(savedTagIds);
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    binding.progressBarTags.setVisibility(View.GONE);
+                    Toast.makeText(requireContext(), "저장된 태그를 불러오는 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show();
+                });
+    }
+    
+    /**
+     * 태그 ID 목록을 통해 태그 정보를 로드합니다.
+     */
+    private void loadTagsByIds(List<String> tagIds) {
+        savedTagList.clear();
+        
+        // 각 태그 ID에 대해 태그 정보 조회
+        for (String tagId : tagIds) {
+            tagRepository.getTagById(tagId)
+                    .addOnSuccessListener(documentSnapshot -> {
+                        if (documentSnapshot.exists()) {
+                            Tag tag = documentSnapshot.toObject(Tag.class);
+                            if (tag != null) {
+                                savedTagList.add(tag);
+                                tagAdapter.notifyDataSetChanged();
+                                updateSavedTagsUI();
+                            }
+                        }
+                        
+                        // 마지막 태그 로드 완료 시 로딩 표시 숨기기
+                        if (savedTagList.size() == tagIds.size() || tagIds.indexOf(tagId) == tagIds.size() - 1) {
+                            binding.progressBarTags.setVisibility(View.GONE);
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        // 마지막 태그 로드 완료 시 로딩 표시 숨기기
+                        if (tagIds.indexOf(tagId) == tagIds.size() - 1) {
+                            binding.progressBarTags.setVisibility(View.GONE);
+                        }
+                    });
+        }
+    }
+    
+    /**
+     * 저장된 태그 UI 업데이트
+     */
+    private void updateSavedTagsUI() {
+        if (savedTagList.isEmpty()) {
+            binding.tvNoSavedTags.setVisibility(View.VISIBLE);
+            binding.recyclerSavedTags.setVisibility(View.GONE);
+        } else {
+            binding.tvNoSavedTags.setVisibility(View.GONE);
+            binding.recyclerSavedTags.setVisibility(View.VISIBLE);
+        }
+    }
+    
+    /**
+     * 태그 상세 화면으로 이동
+     */
+    private void navigateToTagDetail(String tagId) {
+        Intent intent = new Intent(requireContext(), com.example.snapshot.ui.tag.TagDetailActivity.class);
+        intent.putExtra(com.example.snapshot.ui.tag.TagDetailActivity.EXTRA_TAG_ID, tagId);
+        startActivity(intent);
+    }
+    
+    private void showSettingsOptions() {
+        // TODO: 설정 메뉴 표시 (로그아웃 등)
+        // 임시로 로그아웃 기능만 구현
+        userRepository.logoutUser();
+        navigateToLogin();
+    }
+    
+    private void navigateToLogin() {
+        Intent intent = new Intent(requireContext(), LoginActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        requireActivity().finish();
+    }
+    
+    private void showLoading(boolean isLoading) {
+        binding.progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
+    }
+    
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        binding = null;
+    }
+} 

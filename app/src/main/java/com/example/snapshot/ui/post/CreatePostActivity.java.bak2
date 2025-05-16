@@ -1,0 +1,958 @@
+package com.example.snapshot.ui.post;
+
+import android.Manifest;
+import android.app.DatePickerDialog;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.location.Address;
+import android.location.Geocoder;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.MediaStore;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.Toast;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.recyclerview.widget.LinearLayoutManager;
+
+import com.example.snapshot.R;
+import com.example.snapshot.databinding.ActivityCreatePostBinding;
+import com.example.snapshot.model.Post;
+import com.example.snapshot.model.Tag;
+import com.example.snapshot.repository.PostRepository;
+import com.example.snapshot.repository.UserRepository;
+import com.example.snapshot.service.TagSuggestionService;
+import com.example.snapshot.ui.home.TagAdapter;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
+import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.GeoPoint;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+
+public class CreatePostActivity extends AppCompatActivity {
+    
+    private ActivityCreatePostBinding binding;
+    private PostRepository postRepository;
+    private UserRepository userRepository;
+    private TagSuggestionService tagSuggestionService;
+    
+    private Uri selectedImageUri;
+    private List<Tag> addedTags = new ArrayList<>();
+    private TagAdapter addedTagsAdapter;
+    private TagAdapter suggestedTagsAdapter;
+    private List<Tag> suggestedTags = new ArrayList<>();
+    
+    // 권한 요청 코드
+    private static final int PERMISSION_REQUEST_CODE = 100;
+    private static final int LOCATION_PERMISSION_REQUEST_CODE = 101;
+    
+    // 갤러리에서 이미지 선택 런처
+    private final ActivityResultLauncher<String> getContent = registerForActivityResult(
+            new ActivityResultContracts.GetContent(),
+            uri -> {
+                if (uri != null) {
+                    selectedImageUri = uri;
+                    binding.ivPostImage.setImageURI(uri);
+                    binding.btnAddImage.setVisibility(View.GONE);
+                    
+                    // 이미지에서 태그 추천
+                    generateTagSuggestions();
+                }
+            });
+    
+    // 카메라로 사진 촬영 런처
+    private final ActivityResultLauncher<Void> takePicture = registerForActivityResult(
+            new ActivityResultContracts.TakePicturePreview(),
+            bitmap -> {
+                if (bitmap != null) {
+                    binding.ivPostImage.setImageBitmap(bitmap);
+                    binding.btnAddImage.setVisibility(View.GONE);
+                    
+                    // 비트맵을 Uri로 변환 (임시 방법)
+                    selectedImageUri = getImageUri(bitmap);
+                    
+                    // 이미지에서 태그 추천
+                    suggestTagsFromBitmap(bitmap);
+                }
+            });
+    
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        
+        // 시스템 윈도우 설정
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        
+        // 뷰 바인딩 초기화
+        binding = ActivityCreatePostBinding.inflate(getLayoutInflater());
+        setContentView(binding.getRoot());
+        
+        // 저장소 초기화
+        postRepository = PostRepository.getInstance();
+        userRepository = UserRepository.getInstance();
+        tagSuggestionService = TagSuggestionService.getInstance(this);
+        
+        // 툴바 설정
+        setupToolbar();
+        
+        // 태그 리사이클러뷰 설정
+        setupRecyclerViews();
+        
+        // 이벤트 리스너 설정
+        setupListeners();
+        
+        // 기본 태그 타입 칩 추가
+        addTagTypeChips();
+    }
+    
+    private void setupToolbar() {
+        setSupportActionBar(binding.toolbar);
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setDisplayShowHomeEnabled(true);
+        }
+        
+        binding.toolbar.setNavigationOnClickListener(v -> onBackPressed());
+    }
+    
+    private void setupRecyclerViews() {
+        // 추가된 태그 어댑터 설정
+        addedTagsAdapter = new TagAdapter(this, addedTags, false);
+        binding.recyclerAddedTags.setLayoutManager(
+                new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+        binding.recyclerAddedTags.setAdapter(addedTagsAdapter);
+        
+        // 추천 태그 어댑터 설정
+        suggestedTagsAdapter = new TagAdapter(this, suggestedTags, false);
+        binding.recyclerSuggestedTags.setLayoutManager(
+                new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+        binding.recyclerSuggestedTags.setAdapter(suggestedTagsAdapter);
+        
+        // 태그 클릭 리스너 설정
+        suggestedTagsAdapter.setOnTagClickListener(position -> {
+            if (position >= 0 && position < suggestedTags.size()) {
+                showTagEditDialog(suggestedTags.get(position));
+            }
+        });
+        
+        // 추가된 태그 클릭 리스너 설정
+        addedTagsAdapter.setOnTagClickListener(position -> {
+            if (position >= 0 && position < addedTags.size()) {
+                showTagEditDialog(addedTags.get(position));
+            }
+        });
+        
+        // 추가된 태그 롱클릭 리스너 설정
+        addedTagsAdapter.setOnTagLongClickListener(new TagAdapter.OnTagLongClickListener() {
+            @Override
+            public void onTagEdit(int position) {
+                // 태그 편집 처리
+                if (position >= 0 && position < addedTags.size()) {
+                    showTagEditDialog(addedTags.get(position), position);
+                }
+            }
+            
+            @Override
+            public void onTagDelete(int position) {
+                // 태그 삭제 처리
+                if (position >= 0 && position < addedTags.size()) {
+                    confirmTagDelete(addedTags.get(position), position);
+                }
+            }
+            
+            @Override
+            public void onTagSave(int position) {
+                // 태그 저장 기능 구현 (필요한 경우)
+            }
+        });
+        
+        // 추천 태그 어댑터 롱클릭 리스너 설정
+        suggestedTagsAdapter.setOnTagLongClickListener(new TagAdapter.OnTagLongClickListener() {
+            @Override
+            public void onTagEdit(int position) {
+                // 수정 기능 없음
+            }
+            
+            @Override
+            public void onTagDelete(int position) {
+                // 삭제 기능 없음
+            }
+            
+            @Override
+            public void onTagSave(int position) {
+                // 저장 기능 구현 (필요한 경우)
+            }
+        });
+    }
+    
+    private void setupListeners() {
+        // 이미지 추가 버튼 클릭
+        binding.btnAddImage.setOnClickListener(v -> {
+            showImagePickerOptions();
+        });
+        
+        // 게시 버튼 클릭
+        binding.btnPost.setOnClickListener(v -> {
+            createPost();
+        });
+    }
+    
+    private void showImagePickerOptions() {
+        String[] options = {getString(R.string.take_photo), getString(R.string.upload_photo)};
+        
+        // 여기서는 간단하게 갤러리만 열도록 구현
+        checkAndRequestPermissions();
+    }
+    
+    private void checkAndRequestPermissions() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.CAMERA, Manifest.permission.READ_EXTERNAL_STORAGE},
+                    PERMISSION_REQUEST_CODE);
+        } else {
+            openGallery();
+        }
+    }
+    
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                openGallery();
+            } else {
+                Toast.makeText(this, R.string.error_permission_denied, Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+    
+    private void openGallery() {
+        getContent.launch("image/*");
+    }
+    
+    private void openCamera() {
+        takePicture.launch(null);
+    }
+    
+    private Uri getImageUri(Bitmap bitmap) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 100, bytes);
+        String path = MediaStore.Images.Media.insertImage(getContentResolver(), bitmap, "Title", null);
+        return Uri.parse(path);
+    }
+    
+    private void addTagTypeChips() {
+        // 위치 태그
+        Chip locationChip = new Chip(this);
+        locationChip.setText(R.string.tag_location);
+        locationChip.setChipIconResource(R.drawable.ic_location);
+        locationChip.setClickable(true);
+        locationChip.setCheckable(true);
+        locationChip.setTag(Tag.TYPE_LOCATION);
+        binding.chipGroupTags.addView(locationChip);
+        
+        // 제품 태그
+        Chip productChip = new Chip(this);
+        productChip.setText(R.string.tag_product);
+        productChip.setChipIconResource(R.drawable.ic_product);
+        productChip.setClickable(true);
+        productChip.setCheckable(true);
+        productChip.setTag(Tag.TYPE_PRODUCT);
+        binding.chipGroupTags.addView(productChip);
+        
+        // 브랜드 태그
+        Chip brandChip = new Chip(this);
+        brandChip.setText(R.string.tag_brand);
+        brandChip.setChipIconResource(R.drawable.ic_brand);
+        brandChip.setClickable(true);
+        brandChip.setCheckable(true);
+        brandChip.setTag(Tag.TYPE_BRAND);
+        binding.chipGroupTags.addView(brandChip);
+        
+        // 가격 태그
+        Chip priceChip = new Chip(this);
+        priceChip.setText(R.string.tag_price);
+        priceChip.setChipIconResource(R.drawable.ic_price);
+        priceChip.setClickable(true);
+        priceChip.setCheckable(true);
+        priceChip.setTag(Tag.TYPE_PRICE);
+        binding.chipGroupTags.addView(priceChip);
+        
+        // 이벤트 태그
+        Chip eventChip = new Chip(this);
+        eventChip.setText(R.string.tag_event);
+        eventChip.setChipIconResource(R.drawable.ic_event);
+        eventChip.setClickable(true);
+        eventChip.setCheckable(true);
+        eventChip.setTag(Tag.TYPE_EVENT);
+        binding.chipGroupTags.addView(eventChip);
+        
+        // 태그 유형 클릭 이벤트 처리
+        locationChip.setOnClickListener(v -> showTagEditDialog(Tag.TYPE_LOCATION));
+        productChip.setOnClickListener(v -> showTagEditDialog(Tag.TYPE_PRODUCT));
+        brandChip.setOnClickListener(v -> showTagEditDialog(Tag.TYPE_BRAND));
+        priceChip.setOnClickListener(v -> showTagEditDialog(Tag.TYPE_PRICE));
+        eventChip.setOnClickListener(v -> showTagEditDialog(Tag.TYPE_EVENT));
+    }
+    
+    /**
+     * 태그 세부 정보를 입력받는 다이얼로그를 표시합니다.
+     */
+    private void showTagEditDialog(String tagType) {
+        showTagEditDialog(null, tagType);
+    }
+    
+    /**
+     * 태그 세부 정보를 입력받는 다이얼로그를 표시합니다.
+     * @param tag 기존 태그 (수정 모드일 경우). null이면 새 태그 생성 모드
+     * @param tagType 태그 유형 (위치, 제품, 브랜드, 가격, 이벤트)
+     */
+    private void showTagEditDialog(Tag tag, String tagType) {
+        // 다이얼로그 레이아웃 인플레이트
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_edit_tag, null);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        
+        // 태그 유형에 따른 타이틀 설정
+        String tagTypeTitle = "";
+        if (Tag.TYPE_LOCATION.equals(tagType)) {
+            tagTypeTitle = getString(R.string.tag_type_location);
+        } else if (Tag.TYPE_PRODUCT.equals(tagType)) {
+            tagTypeTitle = getString(R.string.tag_type_product);
+        } else if (Tag.TYPE_BRAND.equals(tagType)) {
+            tagTypeTitle = getString(R.string.tag_type_brand);
+        } else if (Tag.TYPE_PRICE.equals(tagType)) {
+            tagTypeTitle = getString(R.string.tag_type_price);
+        } else if (Tag.TYPE_EVENT.equals(tagType)) {
+            tagTypeTitle = getString(R.string.tag_type_event);
+        }
+        
+        builder.setTitle(tagTypeTitle + " 태그 추가");
+        
+        // 기본 필드 초기화
+        EditText etTagName = dialogView.findViewById(R.id.et_tag_name);
+        EditText etTagDescription = dialogView.findViewById(R.id.et_tag_description);
+        
+        // 기존 태그가 있는 경우 정보 채우기
+        if (tag != null) {
+            etTagName.setText(tag.getName());
+            if (tag.getDescription() != null) {
+                etTagDescription.setText(tag.getDescription());
+            }
+        }
+        
+        // 태그 유형별 추가 필드 설정
+        ViewGroup fieldContainer = dialogView.findViewById(R.id.container_tag_fields);
+        
+        // 기존 필드 제거
+        fieldContainer.removeAllViews();
+        
+        // 태그 유형에 따라 다른 필드 추가
+        View additionalFieldsView = null;
+        
+        switch (tagType) {
+            case Tag.TYPE_LOCATION:
+                additionalFieldsView = getLayoutInflater().inflate(R.layout.layout_location_fields, fieldContainer, false);
+                fieldContainer.addView(additionalFieldsView);
+                
+                // 현재 위치 가져오기 버튼 설정
+                Button btnGetLocation = additionalFieldsView.findViewById(R.id.btn_get_current_location);
+                btnGetLocation.setOnClickListener(v -> getCurrentLocation(dialogView));
+                break;
+                
+            case Tag.TYPE_PRODUCT:
+                additionalFieldsView = getLayoutInflater().inflate(R.layout.layout_product_fields, fieldContainer, false);
+                fieldContainer.addView(additionalFieldsView);
+                break;
+                
+            case Tag.TYPE_BRAND:
+                additionalFieldsView = getLayoutInflater().inflate(R.layout.layout_brand_fields, fieldContainer, false);
+                fieldContainer.addView(additionalFieldsView);
+                break;
+                
+            case Tag.TYPE_PRICE:
+                additionalFieldsView = getLayoutInflater().inflate(R.layout.layout_price_fields, fieldContainer, false);
+                fieldContainer.addView(additionalFieldsView);
+                break;
+                
+            case Tag.TYPE_EVENT:
+                additionalFieldsView = getLayoutInflater().inflate(R.layout.layout_event_fields, fieldContainer, false);
+                fieldContainer.addView(additionalFieldsView);
+                setupDatePickers(dialogView);
+                break;
+                
+            default:
+                // 기본 필드만 사용
+                break;
+        }
+        
+        // 기존 태그가 있는 경우 추가 필드에 값 채우기
+        if (tag != null && additionalFieldsView != null) {
+            fillAdditionalFields(tag, additionalFieldsView, tagType);
+        }
+        
+        builder.setView(dialogView);
+        
+        // 추가/수정 버튼 설정
+        builder.setPositiveButton(tag == null ? "추가" : "수정", (dialog, which) -> {
+            try {
+                // 기본 정보 가져오기
+                String name = etTagName.getText().toString().trim();
+                String description = etTagDescription.getText().toString().trim();
+                
+                // 유효성 검사
+                if (name.isEmpty()) {
+                    etTagName.setError(getString(R.string.error_required_field));
+                    return;
+                }
+                
+                // 태그 ID (새 태그면 생성, 기존 태그면 유지)
+                String tagId = tag != null ? tag.getTagId() : UUID.randomUUID().toString();
+                
+                // 태그 유형에 따라 다른 방식으로 태그 생성
+                Tag newTag;
+                try {
+                    switch (tagType) {
+                        case Tag.TYPE_LOCATION:
+                            newTag = createLocationTag(tagId, name, description, dialogView);
+                            break;
+                            
+                        case Tag.TYPE_PRODUCT:
+                            newTag = createProductTag(tagId, name, description, dialogView);
+                            break;
+                            
+                        case Tag.TYPE_BRAND:
+                            newTag = createBrandTag(tagId, name, description, dialogView);
+                            break;
+                            
+                        case Tag.TYPE_PRICE:
+                            newTag = createPriceTag(tagId, name, description, dialogView);
+                            break;
+                            
+                        case Tag.TYPE_EVENT:
+                            newTag = createEventTag(tagId, name, description, dialogView);
+                            break;
+                            
+                        default:
+                            // 기본 태그
+                            newTag = new Tag(tagId, name, description, tagType);
+                            break;
+                    }
+                    
+                    // 태그가 생성되면 목록에 추가
+                    if (tag != null) {
+                        // 기존 태그 업데이트
+                        updateTag(tag, newTag);
+                    } else {
+                        // 새 태그 추가
+                        addTag(newTag);
+                    }
+                    
+                    Toast.makeText(CreatePostActivity.this, 
+                            tag == null ? R.string.tag_added : R.string.tag_updated, 
+                            Toast.LENGTH_SHORT).show();
+                    
+                } catch (IllegalArgumentException e) {
+                    // 유효성 검사 실패 (이미 토스트 메시지 표시됨)
+                    Toast.makeText(CreatePostActivity.this, e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            } catch (Exception e) {
+                Toast.makeText(CreatePostActivity.this, 
+                        "태그 처리 중 오류가 발생했습니다: " + e.getMessage(), 
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
+        
+        // 취소 버튼
+        builder.setNegativeButton(R.string.cancel, null);
+        
+        // 다이얼로그 표시
+        builder.show();
+    }
+    
+    /**
+     * 태그 유형에 따라 추가 필드에 기존 값 채우기
+     */
+    private void fillAdditionalFields(Tag tag, View view, String tagType) {
+        try {
+            switch (tagType) {
+                case Tag.TYPE_LOCATION:
+                    if (tag.getTagData() != null) {
+                        Map<String, Object> data = tag.getTagData();
+                        
+                        EditText etAddress = view.findViewById(R.id.et_location_address);
+                        EditText etLatitude = view.findViewById(R.id.et_location_latitude);
+                        EditText etLongitude = view.findViewById(R.id.et_location_longitude);
+                        
+                        if (data.containsKey("address")) {
+                            etAddress.setText(data.get("address").toString());
+                        }
+                        
+                        if (data.containsKey("latitude") && data.containsKey("longitude")) {
+                            etLatitude.setText(data.get("latitude").toString());
+                            etLongitude.setText(data.get("longitude").toString());
+                        }
+                    }
+                    break;
+                    
+                case Tag.TYPE_PRODUCT:
+                    if (tag.getTagData() != null) {
+                        Map<String, Object> data = tag.getTagData();
+                        
+                        EditText etProductUrl = view.findViewById(R.id.et_product_url);
+                        EditText etProductPrice = view.findViewById(R.id.et_product_price);
+                        EditText etProductBrand = view.findViewById(R.id.et_product_brand);
+                        
+                        if (data.containsKey("url")) {
+                            etProductUrl.setText(data.get("url").toString());
+                        }
+                        
+                        if (data.containsKey("price")) {
+                            etProductPrice.setText(data.get("price").toString());
+                        }
+                        
+                        if (data.containsKey("brand")) {
+                            etProductBrand.setText(data.get("brand").toString());
+                        }
+                    }
+                    break;
+                    
+                // 다른 태그 유형도 비슷하게 처리
+                // ... 생략 ...
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "태그 데이터 로딩 중 오류: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    /**
+     * 날짜 선택 기능을 설정합니다.
+     */
+    private void setupDatePickers(View dialogView) {
+        EditText etStartDate = dialogView.findViewById(R.id.et_event_start_date);
+        EditText etEndDate = dialogView.findViewById(R.id.et_event_end_date);
+        
+        // 현재 날짜
+        Calendar calendar = Calendar.getInstance();
+        int year = calendar.get(Calendar.YEAR);
+        int month = calendar.get(Calendar.MONTH);
+        int day = calendar.get(Calendar.DAY_OF_MONTH);
+        
+        // 시작일 선택
+        etStartDate.setOnClickListener(v -> {
+            DatePickerDialog datePickerDialog = new DatePickerDialog(this, (view, selectedYear, selectedMonth, selectedDay) -> {
+                String date = String.format(Locale.getDefault(), "%d-%02d-%02d", selectedYear, selectedMonth + 1, selectedDay);
+                etStartDate.setText(date);
+            }, year, month, day);
+            datePickerDialog.show();
+        });
+        
+        // 종료일 선택
+        etEndDate.setOnClickListener(v -> {
+            DatePickerDialog datePickerDialog = new DatePickerDialog(this, (view, selectedYear, selectedMonth, selectedDay) -> {
+                String date = String.format(Locale.getDefault(), "%d-%02d-%02d", selectedYear, selectedMonth + 1, selectedDay);
+                etEndDate.setText(date);
+            }, year, month, day);
+            datePickerDialog.show();
+        });
+    }
+    
+    /**
+     * 현재 위치 정보를 가져옵니다.
+     */
+    private void getCurrentLocation(View dialogView) {
+        // 위치 권한 확인
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, 
+                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 
+                    LOCATION_PERMISSION_REQUEST_CODE);
+            return;
+        }
+        
+        // 위치 클라이언트 생성
+        FusedLocationProviderClient fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        
+        // 현재 위치 가져오기
+        fusedLocationClient.getLastLocation()
+                .addOnSuccessListener(this, location -> {
+                    if (location != null) {
+                        EditText etLatitude = dialogView.findViewById(R.id.et_location_latitude);
+                        EditText etLongitude = dialogView.findViewById(R.id.et_location_longitude);
+                        
+                        etLatitude.setText(String.valueOf(location.getLatitude()));
+                        etLongitude.setText(String.valueOf(location.getLongitude()));
+                        
+                        // Geocoder를 사용하여 주소 가져오기
+                        Geocoder geocoder = new Geocoder(this, Locale.getDefault());
+                        try {
+                            List<Address> addresses = geocoder.getFromLocation(location.getLatitude(), location.getLongitude(), 1);
+                            if (!addresses.isEmpty()) {
+                                Address address = addresses.get(0);
+                                String addressText = address.getAddressLine(0);
+                                
+                                EditText etAddress = dialogView.findViewById(R.id.et_location_address);
+                                etAddress.setText(addressText);
+                            }
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    } else {
+                        Toast.makeText(this, "위치 정보를 가져올 수 없습니다", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .addOnFailureListener(this, e -> 
+                        Toast.makeText(this, "위치 정보 가져오기 실패: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+    }
+    
+    /**
+     * 위치 태그를 생성합니다.
+     */
+    private Tag createLocationTag(String tagId, String name, String description, View dialogView) {
+        EditText etAddress = dialogView.findViewById(R.id.et_location_address);
+        EditText etLatitude = dialogView.findViewById(R.id.et_location_latitude);
+        EditText etLongitude = dialogView.findViewById(R.id.et_location_longitude);
+        
+        String address = etAddress.getText().toString().trim();
+        String latitudeStr = etLatitude.getText().toString().trim();
+        String longitudeStr = etLongitude.getText().toString().trim();
+        
+        if (address.isEmpty()) {
+            etAddress.setError(getString(R.string.error_required_field));
+            throw new IllegalArgumentException("주소를 입력해주세요");
+        }
+        
+        double latitude;
+        double longitude;
+        
+        try {
+            latitude = Double.parseDouble(latitudeStr);
+            longitude = Double.parseDouble(longitudeStr);
+        } catch (NumberFormatException e) {
+            etLatitude.setError(getString(R.string.error_invalid_coordinates));
+            throw new IllegalArgumentException("유효한 좌표를 입력해주세요");
+        }
+        
+        return Tag.createLocationTag(tagId, name, address, latitude, longitude);
+    }
+    
+    /**
+     * 제품 태그를 생성합니다.
+     */
+    private Tag createProductTag(String tagId, String name, String description, View dialogView) {
+        EditText etProductUrl = dialogView.findViewById(R.id.et_product_url);
+        EditText etProductPrice = dialogView.findViewById(R.id.et_product_price);
+        EditText etProductBrand = dialogView.findViewById(R.id.et_product_brand);
+        
+        String productUrl = etProductUrl.getText().toString().trim();
+        String priceStr = etProductPrice.getText().toString().trim();
+        String brand = etProductBrand.getText().toString().trim();
+        
+        double price = 0;
+        if (!priceStr.isEmpty()) {
+            try {
+                price = Double.parseDouble(priceStr);
+            } catch (NumberFormatException e) {
+                etProductPrice.setError(getString(R.string.error_invalid_coordinates));
+                throw new IllegalArgumentException("유효한 가격을 입력해주세요");
+            }
+        }
+        
+        return Tag.createProductTag(tagId, name, description, productUrl, price, brand);
+    }
+    
+    /**
+     * 브랜드 태그를 생성합니다.
+     */
+    private Tag createBrandTag(String tagId, String name, String description, View dialogView) {
+        EditText etBrandWebsite = dialogView.findViewById(R.id.et_brand_website);
+        EditText etBrandLogoUrl = dialogView.findViewById(R.id.et_brand_logo_url);
+        
+        String brandWebsite = etBrandWebsite.getText().toString().trim();
+        String brandLogoUrl = etBrandLogoUrl.getText().toString().trim();
+        
+        return Tag.createBrandTag(tagId, name, description, brandWebsite, brandLogoUrl);
+    }
+    
+    /**
+     * 가격 태그를 생성합니다.
+     */
+    private Tag createPriceTag(String tagId, String name, String description, View dialogView) {
+        EditText etPriceAmount = dialogView.findViewById(R.id.et_price_amount);
+        EditText etPriceCurrency = dialogView.findViewById(R.id.et_price_currency);
+        
+        String amountStr = etPriceAmount.getText().toString().trim();
+        String currency = etPriceCurrency.getText().toString().trim();
+        
+        if (amountStr.isEmpty()) {
+            etPriceAmount.setError(getString(R.string.error_required_field));
+            throw new IllegalArgumentException("금액을 입력해주세요");
+        }
+        
+        if (currency.isEmpty()) {
+            currency = "KRW"; // 기본값
+        }
+        
+        double amount;
+        try {
+            amount = Double.parseDouble(amountStr);
+        } catch (NumberFormatException e) {
+            etPriceAmount.setError(getString(R.string.error_invalid_coordinates));
+            throw new IllegalArgumentException("유효한 금액을 입력해주세요");
+        }
+        
+        return Tag.createPriceTag(tagId, name, amount, currency);
+    }
+    
+    /**
+     * 이벤트 태그를 생성합니다.
+     */
+    private Tag createEventTag(String tagId, String name, String description, View dialogView) {
+        EditText etStartDate = dialogView.findViewById(R.id.et_event_start_date);
+        EditText etEndDate = dialogView.findViewById(R.id.et_event_end_date);
+        EditText etEventWebsite = dialogView.findViewById(R.id.et_event_website);
+        
+        String startDate = etStartDate.getText().toString().trim();
+        String endDate = etEndDate.getText().toString().trim();
+        String eventWebsite = etEventWebsite.getText().toString().trim();
+        
+        return Tag.createEventTag(tagId, name, description, startDate, endDate, eventWebsite);
+    }
+    
+    private void generateTagSuggestions() {
+        // 선택된 이미지가 있을 때만 실행
+        if (selectedImageUri == null) return;
+        
+        try {
+            Bitmap bitmap = MediaStore.Images.Media.getBitmap(getContentResolver(), selectedImageUri);
+            suggestTagsFromBitmap(bitmap);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    
+    private void suggestTagsFromBitmap(Bitmap bitmap) {
+        showLoading(true);
+        
+        // Gemini API로 태그 추천
+        tagSuggestionService.suggestTags(bitmap, new TagSuggestionService.TagSuggestionCallback() {
+            @Override
+            public void onTagsGenerated(List<Tag> tags) {
+                runOnUiThread(() -> {
+                    suggestedTags.clear();
+                    suggestedTags.addAll(tags);
+                    suggestedTagsAdapter.notifyDataSetChanged();
+                    
+                    // 추천 태그가 있으면 표시
+                    if (!suggestedTags.isEmpty()) {
+                        binding.tvAiSuggestedTags.setVisibility(View.VISIBLE);
+                        binding.recyclerSuggestedTags.setVisibility(View.VISIBLE);
+                    }
+                    
+                    showLoading(false);
+                });
+            }
+            
+            @Override
+            public void onError(String errorMessage) {
+                runOnUiThread(() -> {
+                    Toast.makeText(CreatePostActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                    showLoading(false);
+                });
+            }
+        });
+    }
+    
+    private void addTag(Tag tag) {
+        // 이미 추가된 태그인지 확인
+        if (!addedTags.contains(tag)) {
+            addedTags.add(tag);
+            addedTagsAdapter.notifyDataSetChanged();
+            
+            // 추천 태그에서 제거
+            suggestedTags.remove(tag);
+            suggestedTagsAdapter.notifyDataSetChanged();
+            
+            // 추천 태그가 비어있으면 숨기기
+            if (suggestedTags.isEmpty()) {
+                binding.tvAiSuggestedTags.setVisibility(View.GONE);
+                binding.recyclerSuggestedTags.setVisibility(View.GONE);
+            }
+        }
+    }
+    
+    private void createPost() {
+        if (selectedImageUri == null) {
+            Toast.makeText(this, "이미지를 선택해주세요.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        String caption = binding.etCaption.getText().toString().trim();
+        
+        FirebaseUser currentUser = userRepository.getCurrentUser();
+        if (currentUser == null) {
+            Toast.makeText(this, "로그인이 필요합니다.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        showLoading(true);
+        
+        try {
+            // 이미지를 비트맵으로 변환
+            Bitmap bitmap = MediaStore.Images.Media.getBitmap(getContentResolver(), selectedImageUri);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos);
+            byte[] imageData = baos.toByteArray();
+            
+            // 이미지 먼저 업로드
+            postRepository.uploadPostImage(imageData)
+                    .addOnSuccessListener(taskSnapshot -> {
+                        // 업로드된 이미지 URL 가져오기
+                        taskSnapshot.getStorage().getDownloadUrl()
+                                .addOnSuccessListener(uri -> {
+                                    // 현재 사용자 정보 가져오기
+                                    userRepository.getUserById(currentUser.getUid())
+                                            .addOnSuccessListener(documentSnapshot -> {
+                                                if (documentSnapshot.exists()) {
+                                                    String userName = documentSnapshot.getString("name");
+                                                    String userProfilePic = documentSnapshot.getString("profilePicUrl");
+                                                    
+                                                    // 포스트 객체 생성
+                                                    Post post = new Post("", currentUser.getUid(), userName, userProfilePic,
+                                                            uri.toString(), caption);
+                                                    
+                                                    // 태그 추가
+                                                    for (Tag tag : addedTags) {
+                                                        post.addTag(tag);
+                                                    }
+                                                    
+                                                    // 포스트 저장
+                                                    postRepository.createPost(post)
+                                                            .addOnSuccessListener(aVoid -> {
+                                                                showLoading(false);
+                                                                Toast.makeText(CreatePostActivity.this, R.string.success_post, Toast.LENGTH_SHORT).show();
+                                                                finish();
+                                                            })
+                                                            .addOnFailureListener(e -> {
+                                                                showLoading(false);
+                                                                Toast.makeText(CreatePostActivity.this, R.string.error_upload, Toast.LENGTH_SHORT).show();
+                                                            });
+                                                }
+                                            })
+                                            .addOnFailureListener(e -> {
+                                                showLoading(false);
+                                                Toast.makeText(CreatePostActivity.this, R.string.error_upload, Toast.LENGTH_SHORT).show();
+                                            });
+                                })
+                                .addOnFailureListener(e -> {
+                                    showLoading(false);
+                                    Toast.makeText(CreatePostActivity.this, R.string.error_upload, Toast.LENGTH_SHORT).show();
+                                });
+                    })
+                    .addOnFailureListener(e -> {
+                        showLoading(false);
+                        Toast.makeText(CreatePostActivity.this, R.string.error_upload, Toast.LENGTH_SHORT).show();
+                    });
+        } catch (IOException e) {
+            showLoading(false);
+            Toast.makeText(this, R.string.error_upload, Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    private void showLoading(boolean isLoading) {
+        binding.progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
+        binding.btnPost.setEnabled(!isLoading);
+        binding.btnAddImage.setEnabled(!isLoading);
+        binding.etCaption.setEnabled(!isLoading);
+    }
+    
+    /**
+     * 태그 삭제를 확인하는 다이얼로그를 표시합니다.
+     */
+    private void confirmTagDelete(Tag tag, int position) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle(R.string.delete_tag);
+        builder.setMessage(R.string.confirm_delete_tag);
+        builder.setPositiveButton(R.string.yes, (dialog, which) -> {
+            deleteTag(position);
+        });
+        builder.setNegativeButton(R.string.no, null);
+        builder.show();
+    }
+    
+    /**
+     * 지정된 위치의 태그를 삭제합니다.
+     */
+    private void deleteTag(int position) {
+        if (position >= 0 && position < addedTags.size()) {
+            addedTags.remove(position);
+            addedTagsAdapter.notifyDataSetChanged();
+        }
+    }
+    
+    /**
+     * 기존 태그를 새 태그로 업데이트합니다.
+     */
+    private void updateTag(Tag oldTag, Tag newTag) {
+        // 기존 태그 찾기
+        int index = -1;
+        for (int i = 0; i < addedTags.size(); i++) {
+            if (addedTags.get(i).getTagId().equals(oldTag.getTagId())) {
+                index = i;
+                break;
+            }
+        }
+        
+        // 태그를 찾은 경우 업데이트
+        if (index >= 0) {
+            addedTags.set(index, newTag);
+            addedTagsAdapter.notifyDataSetChanged();
+        } else {
+            // 기존 태그가 추천 태그에 있는 경우, 추가
+            for (int i = 0; i < suggestedTags.size(); i++) {
+                if (suggestedTags.get(i).getTagId().equals(oldTag.getTagId())) {
+                    suggestedTags.remove(i);
+                    suggestedTagsAdapter.notifyDataSetChanged();
+                    addTag(newTag);
+                    break;
+                }
+            }
+        }
+    }
+    
+    /**
+     * 지정된 태그로 태그 편집 다이얼로그를 표시합니다.
+     */
+    private void showTagEditDialog(Tag tag) {
+        if (tag != null) {
+            showTagEditDialog(tag, tag.getTagType());
+        }
+    }
+    
+    private void showTagEditDialog(Tag tag, int position) {
+        // 태그 편집 다이얼로그 표시 (이 앱에서는 간단히 토스트 메시지만 표시)
+        Toast.makeText(this, "태그 편집 기능은 아직 구현되지 않았습니다", Toast.LENGTH_SHORT).show();
+    }
+} 
