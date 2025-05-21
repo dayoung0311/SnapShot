@@ -16,6 +16,7 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.FirebaseFirestoreException;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QuerySnapshot;
+import com.google.firebase.firestore.SetOptions;
 import com.google.firebase.firestore.Transaction;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
@@ -117,18 +118,55 @@ public class PostRepository {
     
     // 홈 피드용 포스트 가져오기 (팔로우 중인 사용자 + 인기 포스트)
     public Query getPostsForHomeFeed(List<String> followingIds) {
-        // 사용자가 팔로우하는 계정 + 인기 게시물을 기준으로 정렬
+        if (followingIds == null || followingIds.isEmpty()) {
+            followingIds = new ArrayList<>();
+            followingIds.add("dummy_id"); // whereIn은 비어있는 리스트를 허용하지 않음
+        }
+        
+        // hidden 필드가 false인 포스트만 가져옴 (신고로 숨겨지지 않은 것)
         return firestore.collection(POSTS_COLLECTION)
                 .whereIn("userId", followingIds)
+                .whereEqualTo("hidden", false)
                 .orderBy("creationDate", Query.Direction.DESCENDING)
                 .limit(20);
     }
     
     // 인기 포스트 가져오기
     public Query getPopularPosts() {
+        // hidden 필드가 false인 포스트만 가져옴 (신고로 숨겨지지 않은 것)
         return firestore.collection(POSTS_COLLECTION)
+                .whereEqualTo("hidden", false)
                 .orderBy("likeCount", Query.Direction.DESCENDING)
                 .limit(20);
+    }
+    
+    /**
+     * 신고된 사용자를 제외한 홈 피드용 포스트 가져오기
+     * 홈 프래그먼트에서 사용할 메소드
+     * @param followingIds 팔로우 중인 사용자 ID 목록
+     * @param restrictedUsers 제한된 사용자 ID 목록 (신고 누적으로 제한된 사용자)
+     * @return 필터링된 포스트 쿼리
+     */
+    public Query getFilteredPostsForHomeFeed(List<String> followingIds, List<String> restrictedUsers) {
+        if (followingIds == null || followingIds.isEmpty()) {
+            followingIds = new ArrayList<>();
+            followingIds.add("dummy_id"); // whereIn은 비어있는 리스트를 허용하지 않음
+        }
+        
+        // 기본 쿼리 - 팔로우 중인 사용자의 숨겨지지 않은 포스트
+        Query baseQuery = firestore.collection(POSTS_COLLECTION)
+                .whereIn("userId", followingIds)
+                .whereEqualTo("hidden", false)
+                .orderBy("creationDate", Query.Direction.DESCENDING);
+        
+        // 제한된 사용자가 있으면 필터링
+        if (restrictedUsers != null && !restrictedUsers.isEmpty()) {
+            // Firestore에서는 whereIn과 whereNotIn을 함께 사용할 수 없어 Java에서 필터링 처리
+            // 이 경우, 클라이언트 측에서 제한된 사용자의 포스트를 필터링해야 함
+            return baseQuery;
+        }
+        
+        return baseQuery.limit(20);
     }
     
     // 특정 사용자의 모든 포스트 가져오기

@@ -96,6 +96,9 @@ public class TagSearchFragment extends Fragment {
             
             @Override
             public void onUserProfileClicked(int position) { /* 프로필 클릭 시 동작 정의 (예: 프로필 화면 이동) */ }
+
+            @Override
+            public void onReportClicked(int position) { /* 필요시 구현 */ }
         });
         
         // 게시글 자체 클릭 리스너 (PostViewHolder 내부에서 처리될 수도 있음, PostAdapter 구현 확인 필요)

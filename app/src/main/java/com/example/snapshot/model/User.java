@@ -17,12 +17,15 @@ public class User {
     private List<String> followers;
     private List<String> following;
     private List<String> savedTags;
+    private boolean restricted; // 신고로 인한 제한 상태
+    private String restrictedReason; // 제한 이유
     
     // 빈 생성자 - Firestore에 필요
     public User() {
         followers = new ArrayList<>();
         following = new ArrayList<>();
         savedTags = new ArrayList<>();
+        restricted = false; // 기본값은 제한 아님
     }
     
     public User(String userId, String username, String email, String profilePicUrl) {
@@ -37,6 +40,8 @@ public class User {
         this.followers = new ArrayList<>();
         this.following = new ArrayList<>();
         this.savedTags = new ArrayList<>();
+        this.restricted = false; // 기본값은 제한 아님
+        this.restrictedReason = "";
     }
     
     // Getter 및 Setter
@@ -127,6 +132,22 @@ public class User {
 
     public void setSavedTags(List<String> savedTags) {
         this.savedTags = savedTags;
+    }
+
+    public boolean isRestricted() {
+        return restricted;
+    }
+
+    public void setRestricted(boolean restricted) {
+        this.restricted = restricted;
+    }
+
+    public String getRestrictedReason() {
+        return restrictedReason;
+    }
+
+    public void setRestrictedReason(String restrictedReason) {
+        this.restrictedReason = restrictedReason;
     }
 
     /*

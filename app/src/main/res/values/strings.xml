@@ -106,6 +106,24 @@
     <string name="tags">태그</string>
     <string name="edit_tags_hint">태그를 길게 누르면 삭제할 수 있습니다</string>
     
+    <!-- 신고 기능 관련 -->
+    <string name="report_post">게시물 신고</string>
+    <string name="report_user">사용자 신고</string>
+    <string name="report_reason">신고 사유</string>
+    <string name="report_submit">신고 제출</string>
+    <string name="report_success">신고가 접수되었습니다</string>
+    <string name="report_failed">신고 접수 실패</string>
+    <string name="report_already_reported">이미 신고한 콘텐츠입니다</string>
+    <string name="report_reason_inappropriate">부적절한 콘텐츠</string>
+    <string name="report_reason_spam">스팸</string>
+    <string name="report_reason_harmful">유해한 내용</string>
+    <string name="report_reason_false_info">허위 정보</string>
+    <string name="report_reason_other">기타 사유</string>
+    <string name="report_post_title">게시물 신고</string>
+    <string name="report_user_title">사용자 신고</string>
+    <string name="report_content_hidden">이 콘텐츠는 신고가 누적되어 숨겨졌습니다</string>
+    <string name="report_custom_reason_hint">신고 사유를 직접 입력해주세요</string>
+    
     <!-- 검색 관련 -->
     <string name="search_tags">태그</string>
     <string name="search_users">사용자</string>

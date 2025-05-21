@@ -407,6 +407,8 @@ public class PlaceSearchFragment extends Fragment implements OnMapReadyCallback 
             public void onUserProfileClicked(int position) {
                 // TODO: 사용자 프로필 클릭 시 동작 (예: 프로필 화면 이동?)
             }
+            @Override
+            public void onReportClicked(int position) { /* 필요시 구현 */ }
         });
     }
     

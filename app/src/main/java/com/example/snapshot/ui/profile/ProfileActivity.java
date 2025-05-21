@@ -2,11 +2,18 @@ package com.example.snapshot.ui.profile;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
+import android.widget.EditText;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.GridLayoutManager;
 
@@ -16,6 +23,7 @@ import com.example.snapshot.databinding.ActivityProfileBinding;
 import com.example.snapshot.model.Post;
 import com.example.snapshot.model.User;
 import com.example.snapshot.repository.PostRepository;
+import com.example.snapshot.repository.ReportRepository;
 import com.example.snapshot.repository.UserRepository;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -101,6 +109,26 @@ public class ProfileActivity extends AppCompatActivity {
         }
         
         binding.toolbar.setNavigationOnClickListener(v -> onBackPressed());
+    }
+    
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // 현재 로그인한 사용자가 자신의 프로필을 보는 것이 아닌 경우 신고 메뉴 표시
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser != null && !currentUser.getUid().equals(userId)) {
+            getMenuInflater().inflate(R.menu.menu_profile, menu);
+            return true;
+        }
+        return super.onCreateOptionsMenu(menu);
+    }
+    
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == R.id.menu_report_user) {
+            showReportDialog();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
     
     private void setupRecyclerView() {
@@ -346,5 +374,100 @@ public class ProfileActivity extends AppCompatActivity {
     
     private void showLoading(boolean isLoading) {
         binding.progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
+    }
+    
+    /**
+     * 사용자 신고 다이얼로그 표시
+     */
+    private void showReportDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_report, null);
+        builder.setView(dialogView);
+        
+        // 다이얼로그 제목 설정
+        TextView titleText = dialogView.findViewById(R.id.title_report);
+        titleText.setText(R.string.report_user_title);
+        
+        // 라디오 그룹 및 기타 이유 입력창 설정
+        RadioGroup radioGroup = dialogView.findViewById(R.id.radio_group_report_reason);
+        EditText customReasonEdit = dialogView.findViewById(R.id.edit_text_custom_reason);
+        
+        // '기타' 옵션 선택 시 입력창 표시
+        radioGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            if (checkedId == R.id.radio_other) {
+                customReasonEdit.setVisibility(View.VISIBLE);
+            } else {
+                customReasonEdit.setVisibility(View.GONE);
+            }
+        });
+        
+        // 신고 제출 및 취소 버튼 추가
+        builder.setPositiveButton(R.string.report_submit, (dialogInterface, i) -> {
+            // 선택된 라디오 버튼 가져오기
+            int selectedId = radioGroup.getCheckedRadioButtonId();
+            
+            if (selectedId == -1) {
+                // 아무것도 선택되지 않은 경우
+                Toast.makeText(this, R.string.report_reason, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            String reason;
+            if (selectedId == R.id.radio_other) {
+                reason = customReasonEdit.getText().toString().trim();
+                if (reason.isEmpty()) {
+                    customReasonEdit.setError(getString(R.string.error_empty_fields));
+                    return;
+                }
+            } else {
+                RadioButton selectedRadioButton = dialogView.findViewById(selectedId);
+                reason = selectedRadioButton.getText().toString();
+            }
+            
+            submitReport(reason);
+        });
+        
+        builder.setNegativeButton(R.string.cancel, null);
+        
+        // 다이얼로그 표시
+        builder.create().show();
+    }
+    
+    /**
+     * 사용자 신고 제출
+     * @param reason 신고 사유
+     */
+    private void submitReport(String reason) {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            Toast.makeText(this, R.string.login_required, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        if (profileUser == null) {
+            Toast.makeText(this, R.string.error_loading_post, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        showLoading(true);
+        String reporterId = currentUser.getUid();
+        
+        // 신고 제출
+        ReportRepository reportRepository = ReportRepository.getInstance();
+        reportRepository.reportUser(reporterId, userId, reason)
+            .addOnSuccessListener(aVoid -> {
+                showLoading(false);
+                Toast.makeText(this, R.string.report_success, Toast.LENGTH_SHORT).show();
+            })
+            .addOnFailureListener(e -> {
+                showLoading(false);
+                // 이미 신고한 경우 특별 메시지 표시
+                if (e.getMessage() != null && e.getMessage().contains("이미 이 사용자를 신고하셨습니다")) {
+                    Toast.makeText(this, R.string.report_already_reported, Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, getString(R.string.report_failed) + ": " + e.getMessage(), 
+                            Toast.LENGTH_SHORT).show();
+                }
+            });
     }
 } 

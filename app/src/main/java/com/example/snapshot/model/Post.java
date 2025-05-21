@@ -17,12 +17,15 @@ public class Post {
     private List<String> userLikes; // 좋아요를 누른 사용자 ID 목록
     private List<Tag> tags; // 태그 목록
     private List<String> tagNames; // 태그 이름 목록 (검색용)
+    private boolean hidden; // 신고로 인한 숨김 상태
+    private String hiddenReason; // 숨김 이유
     
     // 빈 생성자 - Firestore에 필요
     public Post() {
         userLikes = new ArrayList<>();
         tags = new ArrayList<>();
         tagNames = new ArrayList<>(); // 초기화
+        hidden = false; // 기본값은 숨김 아님
     }
     
     public Post(String postId, String userId, String userName, String userProfilePic, 
@@ -39,6 +42,8 @@ public class Post {
         this.userLikes = new ArrayList<>();
         this.tags = new ArrayList<>();
         this.tagNames = new ArrayList<>(); // 초기화
+        this.hidden = false; // 기본값은 숨김 아님
+        this.hiddenReason = "";
     }
     
     // 모든 필드를 받는 생성자 추가
@@ -56,6 +61,8 @@ public class Post {
         this.userLikes = new ArrayList<>(); // 기본값
         // tags 설정 시 tagNames도 함께 설정
         setTags(tags != null ? tags : new ArrayList<>()); 
+        this.hidden = false; // 기본값은 숨김 아님
+        this.hiddenReason = "";
     }
     
     // Getter 및 Setter
@@ -174,6 +181,22 @@ public class Post {
              // tagNames 리스트 업데이트
             updateTagNames();
         }
+    }
+    
+    public boolean isHidden() {
+        return hidden;
+    }
+    
+    public void setHidden(boolean hidden) {
+        this.hidden = hidden;
+    }
+    
+    public String getHiddenReason() {
+        return hiddenReason;
+    }
+    
+    public void setHiddenReason(String hiddenReason) {
+        this.hiddenReason = hiddenReason;
     }
     
     // tags 리스트를 기반으로 tagNames 리스트를 업데이트하는 헬퍼 메소드

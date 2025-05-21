@@ -14,4 +14,10 @@
         android:title="@string/delete_post"
         app:showAsAction="ifRoom" />
     
+    <item
+        android:id="@+id/menu_report_post"
+        android:icon="@drawable/ic_report"
+        android:title="@string/report_post"
+        app:showAsAction="never" />
+    
 </menu> 

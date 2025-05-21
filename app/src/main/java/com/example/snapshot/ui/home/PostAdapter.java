@@ -67,6 +67,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         void onShareClicked(int position);
         void onTagClicked(int postPosition, int tagPosition);
         void onUserProfileClicked(int position);
+        void onReportClicked(int position);
     }
     
     public interface OnPostTagSaveListener {
@@ -210,6 +211,32 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                 if (listener != null) {
                     listener.onUserProfileClicked(position);
                 }
+            });
+            
+            binding.btnMoreOptions.setOnClickListener(v -> {
+                androidx.appcompat.widget.PopupMenu popupMenu = new androidx.appcompat.widget.PopupMenu(context, binding.btnMoreOptions);
+                popupMenu.inflate(R.menu.menu_post_detail);
+                FirebaseUser currentUser = userRepository.getCurrentUser();
+                boolean isMyPost = currentUser != null && posts.get(position).getUserId().equals(currentUser.getUid());
+                if (isMyPost) {
+                    popupMenu.getMenu().findItem(R.id.menu_report_post).setVisible(false);
+                    popupMenu.getMenu().findItem(R.id.menu_edit_post).setVisible(true);
+                    popupMenu.getMenu().findItem(R.id.menu_delete_post).setVisible(true);
+                } else {
+                    popupMenu.getMenu().findItem(R.id.menu_report_post).setVisible(true);
+                    popupMenu.getMenu().findItem(R.id.menu_edit_post).setVisible(false);
+                    popupMenu.getMenu().findItem(R.id.menu_delete_post).setVisible(false);
+                }
+                popupMenu.setOnMenuItemClickListener(item -> {
+                    int id = item.getItemId();
+                    if (id == R.id.menu_report_post) {
+                        if (listener != null) listener.onReportClicked(position);
+                        return true;
+                    }
+                    // 수정/삭제 등 다른 메뉴는 필요시 추가
+                    return false;
+                });
+                popupMenu.show();
             });
         }
     }

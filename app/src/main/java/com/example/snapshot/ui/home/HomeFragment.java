@@ -6,6 +6,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
+import android.widget.TextView;
+import android.widget.RadioGroup;
+import android.widget.EditText;
+import android.widget.RadioButton;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -18,6 +22,7 @@ import com.example.snapshot.model.Post;
 import com.example.snapshot.model.Tag;
 import com.example.snapshot.model.User;
 import com.example.snapshot.repository.PostRepository;
+import com.example.snapshot.repository.ReportRepository;
 import com.example.snapshot.repository.UserRepository;
 import com.example.snapshot.repository.TagRepository;
 import com.example.snapshot.ui.post.CommentActivity;
@@ -37,6 +42,7 @@ public class HomeFragment extends Fragment {
     private PostRepository postRepository;
     private UserRepository userRepository;
     private TagRepository tagRepository;
+    private ReportRepository reportRepository;
     
     private List<Post> postList = new ArrayList<>();
     
@@ -54,6 +60,7 @@ public class HomeFragment extends Fragment {
         postRepository = PostRepository.getInstance();
         userRepository = UserRepository.getInstance();
         tagRepository = TagRepository.getInstance();
+        reportRepository = ReportRepository.getInstance();
         
         // 어댑터 초기화
         setupRecyclerView();
@@ -95,6 +102,11 @@ public class HomeFragment extends Fragment {
             @Override
             public void onUserProfileClicked(int position) {
                 navigateToUserProfile(position);
+            }
+            
+            @Override
+            public void onReportClicked(int position) {
+                showReportDialogForPost(position);
             }
         });
         
@@ -142,43 +154,95 @@ public class HomeFragment extends Fragment {
     }
     
     private void loadFollowingPosts(List<String> followingList) {
-        // 현재 사용자를 팔로잉 목록에 추가 (자신의 게시물도 표시)
         FirebaseUser currentUser = userRepository.getCurrentUser();
         if (currentUser != null && !followingList.contains(currentUser.getUid())) {
             followingList.add(currentUser.getUid());
         }
-        
-        Query query = postRepository.getPostsForHomeFeed(followingList);
-        
-        query.get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    postList.clear();
-                    
-                    for (DocumentSnapshot document : queryDocumentSnapshots) {
-                        Post post = document.toObject(Post.class);
-                        if (post != null) {
-                            postList.add(post);
-                        }
-                    }
-                    
-                    if (postList.isEmpty()) {
-                        showEmptyView(true);
-                    } else {
-                        showEmptyView(false);
-                    }
-                    
-                    postAdapter.notifyDataSetChanged();
-                    showLoading(false);
-                })
-                .addOnFailureListener(e -> {
-                    showLoading(false);
-                    Toast.makeText(getContext(), R.string.error_network, Toast.LENGTH_SHORT).show();
-                });
+
+        // Firestore에서 제한된 사용자 목록을 비동기로 가져오기
+        com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            .collection("users")
+            .whereEqualTo("restricted", true)
+            .get()
+            .addOnSuccessListener(snapshot -> {
+                List<String> restrictedUsers = new ArrayList<>();
+                for (DocumentSnapshot doc : snapshot.getDocuments()) {
+                    restrictedUsers.add(doc.getId());
+                }
+                // restrictedUsers를 활용해 게시물 쿼리 실행
+                Query query = postRepository.getFilteredPostsForHomeFeed(followingList, restrictedUsers);
+                query.get()
+                        .addOnSuccessListener(queryDocumentSnapshots -> {
+                            postList.clear();
+                            for (DocumentSnapshot document : queryDocumentSnapshots) {
+                                Post post = document.toObject(Post.class);
+                                if (post != null && !restrictedUsers.contains(post.getUserId())) {
+                                    postList.add(post);
+                                }
+                            }
+                            if (postList.isEmpty()) {
+                                showEmptyView(true);
+                            } else {
+                                showEmptyView(false);
+                            }
+                            postAdapter.notifyDataSetChanged();
+                            showLoading(false);
+                        })
+                        .addOnFailureListener(e -> {
+                            showLoading(false);
+                            Toast.makeText(getContext(), R.string.error_network, Toast.LENGTH_SHORT).show();
+                        });
+            })
+            .addOnFailureListener(e -> {
+                // 제한된 사용자 목록 가져오기 실패 시 기존 방식으로 로드
+                Query query = postRepository.getPostsForHomeFeed(followingList);
+                loadPostsFromQuery(query);
+            });
     }
     
     private void loadPopularPosts() {
-        Query query = postRepository.getPopularPosts();
-        
+        com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            .collection("users")
+            .whereEqualTo("restricted", true)
+            .get()
+            .addOnSuccessListener(snapshot -> {
+                List<String> restrictedUsers = new ArrayList<>();
+                for (DocumentSnapshot doc : snapshot.getDocuments()) {
+                    restrictedUsers.add(doc.getId());
+                }
+                Query query = postRepository.getPopularPosts();
+                query.get()
+                        .addOnSuccessListener(queryDocumentSnapshots -> {
+                            postList.clear();
+                            for (DocumentSnapshot document : queryDocumentSnapshots) {
+                                Post post = document.toObject(Post.class);
+                                if (post != null && !restrictedUsers.contains(post.getUserId())) {
+                                    postList.add(post);
+                                }
+                            }
+                            if (postList.isEmpty()) {
+                                showEmptyView(true);
+                            } else {
+                                showEmptyView(false);
+                            }
+                            postAdapter.notifyDataSetChanged();
+                            showLoading(false);
+                        })
+                        .addOnFailureListener(e -> {
+                            showLoading(false);
+                            Toast.makeText(getContext(), R.string.error_network, Toast.LENGTH_SHORT).show();
+                        });
+            })
+            .addOnFailureListener(e -> {
+                Query query = postRepository.getPopularPosts();
+                loadPostsFromQuery(query);
+            });
+    }
+    
+    /**
+     * 주어진 쿼리로 게시물 로드 (기존 방식)
+     */
+    private void loadPostsFromQuery(Query query) {
         query.get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     postList.clear();
@@ -357,6 +421,88 @@ public class HomeFragment extends Fragment {
     private void showEmptyView(boolean isEmpty) {
         binding.tvEmpty.setVisibility(isEmpty ? View.VISIBLE : View.GONE);
         binding.recyclerPosts.setVisibility(isEmpty ? View.GONE : View.VISIBLE);
+    }
+    
+    // 홈 피드에서 포스트 신고 다이얼로그 표시
+    private void showReportDialogForPost(int position) {
+        if (position < 0 || position >= postList.size()) return;
+        Post post = postList.get(position);
+        if (post == null) return;
+        
+        androidx.appcompat.app.AlertDialog.Builder builder = new androidx.appcompat.app.AlertDialog.Builder(requireContext());
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_report, null);
+        builder.setView(dialogView);
+
+        // 다이얼로그 제목 설정
+        TextView titleText = dialogView.findViewById(R.id.title_report);
+        titleText.setText(R.string.report_post_title);
+
+        // 라디오 그룹 및 기타 이유 입력창 설정
+        RadioGroup radioGroup = dialogView.findViewById(R.id.radio_group_report_reason);
+        EditText customReasonEdit = dialogView.findViewById(R.id.edit_text_custom_reason);
+
+        // '기타' 옵션 선택 시 입력창 표시
+        radioGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            if (checkedId == R.id.radio_other) {
+                customReasonEdit.setVisibility(View.VISIBLE);
+            } else {
+                customReasonEdit.setVisibility(View.GONE);
+            }
+        });
+
+        builder.setPositiveButton(R.string.report_submit, (dialogInterface, i) -> {
+            int selectedId = radioGroup.getCheckedRadioButtonId();
+            if (selectedId == -1) {
+                Toast.makeText(getContext(), R.string.report_reason, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String reason;
+            if (selectedId == R.id.radio_other) {
+                reason = customReasonEdit.getText().toString().trim();
+                if (reason.isEmpty()) {
+                    customReasonEdit.setError(getString(R.string.error_empty_fields));
+                    return;
+                }
+            } else {
+                RadioButton selectedRadioButton = dialogView.findViewById(selectedId);
+                reason = selectedRadioButton.getText().toString();
+            }
+            submitReportForPost(position, reason);
+        });
+        builder.setNegativeButton(R.string.cancel, (dialogInterface, i) -> {});
+        builder.create().show();
+    }
+
+    // 홈 피드에서 포스트 신고 처리
+    private void submitReportForPost(int position, String reason) {
+        FirebaseUser currentUser = userRepository.getCurrentUser();
+        if (currentUser == null) {
+            Toast.makeText(getContext(), R.string.login_required, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (position < 0 || position >= postList.size()) {
+            Toast.makeText(getContext(), R.string.error_loading_post, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Post post = postList.get(position);
+        if (post == null) {
+            Toast.makeText(getContext(), R.string.error_loading_post, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String reporterId = currentUser.getUid();
+        String postId = post.getPostId();
+        // 신고 제출
+        reportRepository.reportPost(reporterId, postId, reason)
+            .addOnSuccessListener(aVoid -> {
+                Toast.makeText(getContext(), R.string.report_success, Toast.LENGTH_SHORT).show();
+            })
+            .addOnFailureListener(e -> {
+                if (e.getMessage() != null && e.getMessage().contains("이미 이 포스트를 신고하셨습니다")) {
+                    Toast.makeText(getContext(), R.string.report_already_reported, Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(getContext(), getString(R.string.report_failed) + ": " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            });
     }
     
     @Override
