@@ -565,4 +565,42 @@ public class PostRepository {
             }
         });
     }
+    
+    // 태그 이름 일부로 포스트 검색 (부분 일치)
+    public Task<List<Post>> searchPostsByTagPartial(String partialTagName) {
+        TagRepository tagRepository = TagRepository.getInstance();
+        return tagRepository.searchTagsByName(partialTagName)
+            .get()
+            .continueWithTask(task -> {
+                if (task.isSuccessful() && task.getResult() != null) {
+                    List<String> tagNames = new ArrayList<>();
+                    for (DocumentSnapshot tagDoc : task.getResult().getDocuments()) {
+                        String tagName = tagDoc.getString("name");
+                        if (tagName != null) {
+                            tagNames.add(tagName);
+                        }
+                    }
+                    if (tagNames.isEmpty()) {
+                        return Tasks.forResult(new ArrayList<Post>());
+                    }
+                    // tagNames 배열에 포함된 포스트를 모두 가져온다 (whereArrayContainsAny)
+                    return firestore.collection(POSTS_COLLECTION)
+                        .whereArrayContainsAny("tagNames", tagNames)
+                        .orderBy("creationDate", Query.Direction.DESCENDING)
+                        .get()
+                        .continueWith(postTask -> {
+                            List<Post> posts = new ArrayList<>();
+                            if (postTask.isSuccessful() && postTask.getResult() != null) {
+                                for (DocumentSnapshot doc : postTask.getResult().getDocuments()) {
+                                    Post post = doc.toObject(Post.class);
+                                    if (post != null) posts.add(post);
+                                }
+                            }
+                            return posts;
+                        });
+                } else {
+                    return Tasks.forResult(new ArrayList<Post>());
+                }
+            });
+    }
 } 

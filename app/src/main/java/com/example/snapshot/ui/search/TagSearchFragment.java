@@ -117,37 +117,24 @@ public class TagSearchFragment extends Fragment {
             clearListAndShowInitialMessage();
             return;
         }
-        
-        String trimmedQuery = query.trim(); // Firestore 검색어는 대소문자 구분 가능성 있음, 정책 확인 필요
+        String trimmedQuery = query.trim();
         showLoading(true);
-        
         try {
-            // PostRepository의 태그 이름 검색 메소드 사용
-            postRepository.searchPostsByTag(trimmedQuery)
-                    .get()
-                    .addOnSuccessListener(queryDocumentSnapshots -> {
+            // 태그 이름 일부로 포스트 검색
+            postRepository.searchPostsByTagPartial(trimmedQuery)
+                    .addOnSuccessListener(posts -> {
                         postList.clear();
-                        
-                        for (DocumentSnapshot document : queryDocumentSnapshots) {
-                            Post post = document.toObject(Post.class);
-                            if (post != null) {
-                                postList.add(post);
-                            }
-                        }
-                        
+                        postList.addAll(posts);
                         adapter.notifyDataSetChanged();
-                        
-                        // 검색 결과 유무에 따라 표시
                         showInitialOrNoResultsState(postList.isEmpty());
-                        
                         showLoading(false);
                     })
                     .addOnFailureListener(e -> {
                         showLoading(false);
                         Toast.makeText(requireContext(), "게시글 검색 중 오류가 발생했습니다: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                        showInitialOrNoResultsState(true); // 오류 시에도 초기 상태 표시
+                        showInitialOrNoResultsState(true);
                     });
-        } catch (Exception e) { // 예를 들어 Repository 메소드가 없을 경우 등
+        } catch (Exception e) {
             showLoading(false);
             Toast.makeText(requireContext(), "게시글 검색 중 오류가 발생했습니다: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             showInitialOrNoResultsState(true);
