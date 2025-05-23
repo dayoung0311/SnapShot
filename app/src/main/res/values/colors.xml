@@ -42,4 +42,7 @@
     <color name="grey_medium">#9E9E9E</color>
     <color name="blue">#2196F3</color>
     <color name="orange">#FF9800</color>
+    <color name="logo_orange">#FC4C02</color>
+    <color name="lightorange">#EEA787</color>
+
 </resources>
