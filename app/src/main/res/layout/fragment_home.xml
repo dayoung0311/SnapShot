@@ -21,25 +21,41 @@
             app:layout_scrollFlags="scroll|enterAlways|snap"
             android:elevation="0dp"
             app:titleCentered="true"
-            app:title="@string/app_name"
-            app:titleTextAppearance="@style/TextAppearance.Snapshot.Title"
             app:titleTextColor="@color/text_primary">
 
-            <ImageView
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_gravity="center"
-                android:src="@mipmap/ic_launcher"
-                android:contentDescription="@string/app_name" />
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="left"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <ImageView
+                    android:id="@+id/image1"
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:layout_marginEnd="1dp"
+                    android:layout_marginTop="15dp"
+                    android:src="@drawable/logo_camera" />
+
+                <ImageView
+                    android:id="@+id/image2"
+                    android:layout_width="90dp"
+                    android:layout_height="90dp"
+                    android:layout_marginTop="17dp"
+                    android:src="@drawable/logo_text" />
+
+            </LinearLayout>
 
         </com.google.android.material.appbar.MaterialToolbar>
+
 
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/swipe_refresh_layout"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="795dp"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
         <androidx.recyclerview.widget.RecyclerView
@@ -47,10 +63,10 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:paddingTop="8dp"
-            android:paddingBottom="16dp"
             android:paddingStart="8dp"
+            android:paddingTop="8dp"
             android:paddingEnd="8dp"
+            android:paddingBottom="16dp"
             tools:listitem="@layout/item_post" />
 
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>

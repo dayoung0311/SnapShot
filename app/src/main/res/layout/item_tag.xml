@@ -10,6 +10,7 @@
     android:textColor="@color/black"
     app:chipBackgroundColor="@color/lightorange"
     app:chipIconEnabled="true"
+
     app:chipIconTint="@color/primary"
     app:chipStrokeWidth="0dp"
     app:chipMinHeight="28dp"

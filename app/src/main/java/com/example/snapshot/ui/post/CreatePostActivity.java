@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.DatePickerDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.location.Address;
 import android.location.Geocoder;
@@ -44,6 +45,7 @@ import com.google.android.material.chip.ChipGroup;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.GeoPoint;
 import com.google.firebase.Timestamp;
+import com.google.android.flexbox.FlexboxLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
